@@ -1,0 +1,35 @@
+before_script:
+  - "apk update -qq"
+  - "apk add -qq git"
+  - "which ssh-agent || ( apk add -qq openssh-client )"
+  - "apk add -qq sshpass"
+  - "eval $(ssh-agent -s)"
+  - cat > deployer.key <(echo "$SSH_PRIVATE_KEY")
+  - chmod 0600 deployer.key
+  - ssh-add deployer.key
+  - "ssh-add <(echo \"$SSH_PRIVATE_KEY\")"
+  - "mkdir -p ~/.ssh"
+  - "[[ -f /.dockerenv ]] && echo -e \"Host *\\n\\tStrictHostKeyChecking no\\n\\n\" > ~/.ssh/config"
+  ## here we connect the server use of server key which are store into git variable print present working directory(PWD)
+  - ssh $FTP_DEPLOY_USER_PROD@$FTP_DEPLOY_HOST_PROD "cd $FTP_PROJECT_PROD && pwd"
+
+deploy:
+  image: ravi4224/git-ftp
+  stage: deploy
+  environment:
+    name: Production
+    url: PRODUCTION_URL
+  only:
+    - master
+  script:
+    ## use of below command will know who is trigger the job
+    - echo "Hello, $GITLAB_USER_LOGIN!"
+    ## Intialize the git-ftp - After First push git ftp init comment so it will not intalize everytime
+    - git ftp init -u $FTP_DEPLOY_USER_PROD --branch master --remote-root $FTP_PROJECT_PROD --verbose --key deployer.key --insecure sftp://$FTP_DEPLOY_HOST_PROD
+    - git config git-ftp.url "sftp://$FTP_DEPLOY_HOST_PROD/$FTP_PROJECT_PROD"
+    - git config git-ftp.password "$FTP_DEPLOY_PASSWORD_PROD"
+    - git config git-ftp.user "$FTP_DEPLOY_USER_PROD"
+    ## Push Code into Production Server
+    - git ftp push --remote-root /$FTP_PROJECT_PROD/ -vv --syncroot $CI_PROJECT_DIR --insecure --key deployer.key --verbose --user $FTP_DEPLOY_USER_PROD sftp://$FTP_DEPLOY_HOST_PROD --passwd $FTP_DEPLOY_PASSWORD_PROD
+    ## Connect the server and chnage directory and start js file for socket connection
+    - ssh $FTP_DEPLOY_USER_PROD@$FTP_DEPLOY_HOST_PROD "cd $FTP_PROJECT_PROD/API/socket-io && forever start -o out.log -e error.log index.js && exit"
